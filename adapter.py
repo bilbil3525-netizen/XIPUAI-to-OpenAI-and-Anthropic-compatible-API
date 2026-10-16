@@ -398,3 +398,156 @@ async def heartbeat_status():
         "last_activity": datetime.fromtimestamp(last_user_activity).strftime('%Y-%m-%d %H:%M:%S'),
         "time_since_activity": int(time.time() - last_user_activity)
     }
+
+
+# =====================================================================
+# ==      Anthropic-compatible layer  (Claude Code / CC Switch)      ==
+# =====================================================================
+
+def _anthropic_text(content) -> str:
+    """Flatten Anthropic content (str | list of blocks) into plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        out = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            t = part.get("type")
+            if t == "text":
+                out.append(part.get("text", ""))
+            elif t == "tool_result":
+                inner = part.get("content")
+                out.append(_anthropic_text(inner) if inner else "")
+            elif t == "tool_use":
+                out.append(f"[tool_use {part.get('name')}: {json.dumps(part.get('input', {}), ensure_ascii=False)}]")
+            elif t == "image":
+                out.append("[image omitted]")
+        return "\n".join(x for x in out if x)
+    return ""
+
+
+def _anthropic_prompt(body: dict) -> str:
+    parts = []
+    system = body.get("system")
+    if system:
+        parts.append("System:\n" + _anthropic_text(system))
+    for msg in body.get("messages", []) or []:
+        role = (msg.get("role") or "user").capitalize()
+        text = _anthropic_text(msg.get("content"))
+        if text:
+            parts.append(f"{role}:\n{text}")
+    parts.append("Assistant:")
+    return "\n\n".join(parts)
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/v1/messages")
+async def anthropic_messages(request: Request):
+    update_user_activity()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    model = body.get("model") or "claude-opus-5"
+    want_stream = bool(body.get("stream", False))
+    prompt = _anthropic_prompt(body)
+
+    # 学校接口要求先建会话，且不能紧跟着立刻发对话（速率限制）
+    session_id = await create_new_session({
+        "model": model,
+        "temperature": body.get("temperature", 0.7),
+        "max_tokens": body.get("max_tokens", 0),
+    })
+    await asyncio.sleep(INTER_REQUEST_DELAY)
+    payload = {"text": prompt, "files": [], "sessionId": session_id}
+    msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+
+    if not want_stream:
+        text = ""
+        try:
+            async with client.stream("POST", CHAT_API_URL, json=payload, headers=get_dynamic_headers()) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    chunk = line[5:].strip()
+                    if not chunk or chunk == "[DONE]":
+                        continue
+                    try:
+                        j = json.loads(chunk)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(j.get("data"), str):
+                        text += j["data"]
+        finally:
+            if ENABLE_AUTO_DELETION:
+                asyncio.create_task(delete_session(session_id))
+
+        return JSONResponse({
+            "id": msg_id, "type": "message", "role": "assistant", "model": model,
+            "content": [{"type": "text", "text": text}],
+            "stop_reason": "end_turn", "stop_sequence": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        })
+
+    async def gen():
+        yield _sse("message_start", {
+            "type": "message_start",
+            "message": {"id": msg_id, "type": "message", "role": "assistant",
+                        "model": model, "content": [], "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 0, "output_tokens": 0}},
+        })
+        yield _sse("content_block_start", {
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        })
+        yield _sse("ping", {"type": "ping"})
+        try:
+            async with client.stream("POST", CHAT_API_URL, json=payload, headers=get_dynamic_headers()) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    chunk = line[5:].strip()
+                    if not chunk or chunk == "[DONE]":
+                        continue
+                    try:
+                        j = json.loads(chunk)
+                    except json.JSONDecodeError:
+                        continue
+                    piece = j.get("data")
+                    if isinstance(piece, str) and piece:
+                        yield _sse("content_block_delta", {
+                            "type": "content_block_delta", "index": 0,
+                            "delta": {"type": "text_delta", "text": piece},
+                        })
+        except Exception as e:
+            logger.error(f"anthropic stream error: {e}", exc_info=True)
+        finally:
+            if ENABLE_AUTO_DELETION:
+                asyncio.create_task(delete_session(session_id))
+        yield _sse("content_block_stop", {"type": "content_block_stop", "index": 0})
+        yield _sse("message_delta", {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": {"output_tokens": 0},
+        })
+        yield _sse("message_stop", {"type": "message_stop"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.post("/v1/messages/count_tokens")
+async def anthropic_count_tokens(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    approx = max(1, len(_anthropic_prompt(body)) // 3)
+    return JSONResponse({"input_tokens": approx})
