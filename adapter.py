@@ -265,6 +265,34 @@ async def delete_session(session_id: str):
     except Exception as e:
         logger.error(f"Cleanup Task: Failed to delete session {session_id}. Error: {e}", exc_info=True)
 
+async def cleanup_orphan_sessions():
+    """启动时清理本中转遗留的会话，避免撞上学校的 50 会话上限。
+
+    只删除名字形如 "API Request @ ..." 的会话 —— 那是本适配器创建的；
+    你自己的聊天记录和心跳会话都会保留。
+    """
+    try:
+        headers = get_dynamic_headers()
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as c:
+            r = await c.get(f"{BASE_URL}/session?sf_request_type=ajax", headers=headers)
+            r.raise_for_status()
+            data = r.json().get("data", []) or []
+        stale = [s["id"] for s in data
+                 if isinstance(s.get("name"), str) and s["name"].startswith("API Request @")]
+        if not stale:
+            logger.info("cleanup: no orphan sessions found")
+            print(f"\U0001f9f9 Startup cleanup: no orphan sessions (total {len(data)})")
+            return
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as c:
+            rr = await c.post(f"{BASE_URL}/delSession?sf_request_type=ajax",
+                              headers=headers, json={"ids": [int(i) for i in stale]})
+        logger.info(f"cleanup: deleted {len(stale)} orphan sessions")
+        print(f"\U0001f9f9 Startup cleanup: removed {len(stale)} orphan session(s), kept {len(data) - len(stale)}")
+    except Exception as e:
+        logger.error(f"cleanup failed: {e}", exc_info=True)
+        print(f"\u26a0\ufe0f  Startup cleanup failed: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     global heartbeat_task
@@ -274,6 +302,9 @@ async def startup_event():
     print(f"⚙️  Auto-deletion: {'Enabled' if ENABLE_AUTO_DELETION else 'Disabled'}")
     print(f"💓 Heartbeat: {'Enabled' if ENABLE_HEARTBEAT else 'Disabled'}")
     
+    # 先清理上次运行遗留的会话
+    await cleanup_orphan_sessions()
+
     if ENABLE_HEARTBEAT:
         # 创建心跳会话
         await create_heartbeat_session()
@@ -419,6 +450,26 @@ async def heartbeat_status():
 # ==      Anthropic-compatible layer  (Claude Code / CC Switch)      ==
 # =====================================================================
 
+async def _create_session_retry(openai_request: dict, attempts: int = 3):
+    """建会话失败时重试 —— 学校接口偶发 429/5xx，重试可避免冒到客户端。"""
+    last = None
+    for i in range(attempts):
+        try:
+            return await create_new_session(openai_request)
+        except HTTPException as e:
+            last = e
+            logger.warning(f"saveSession failed (attempt {i+1}/{attempts}): {e.detail}")
+            await asyncio.sleep(1.5 * (i + 1))
+    raise last
+
+
+def _anthropic_error(status: int, message: str):
+    return JSONResponse(
+        status_code=status,
+        content={"type": "error", "error": {"type": "api_error", "message": message}},
+    )
+
+
 def _anthropic_text(content) -> str:
     """Flatten Anthropic content (str | list of blocks) into plain text."""
     if isinstance(content, str):
@@ -473,11 +524,14 @@ async def anthropic_messages(request: Request):
     prompt = _anthropic_prompt(body)
 
     # 学校接口要求先建会话，且不能紧跟着立刻发对话（速率限制）
-    session_id = await create_new_session({
-        "model": model,
-        "temperature": body.get("temperature", 0.7),
-        "max_tokens": body.get("max_tokens", 0),
-    })
+    try:
+        session_id = await _create_session_retry({
+            "model": model,
+            "temperature": body.get("temperature", 0.7),
+            "max_tokens": body.get("max_tokens", 0),
+        })
+    except HTTPException as e:
+        return _anthropic_error(e.status_code if e.status_code < 500 else 503, str(e.detail))
     await asyncio.sleep(INTER_REQUEST_DELAY)
     payload = {"text": prompt, "files": [], "sessionId": session_id}
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
