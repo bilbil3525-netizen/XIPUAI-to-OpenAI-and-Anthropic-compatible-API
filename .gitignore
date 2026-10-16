@@ -1,0 +1,26 @@
+# ---- secrets: never commit ----
+.env
+*.env
+!.env.example
+
+# ---- runtime output ----
+logs/
+relay_out.log
+*.log
+
+# ---- python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- debug screenshots produced by auth_v4.py on failure ----
+auth_*fail*.png
+auth_*timeout*.png
+
+# ---- os noise ----
+.DS_Store
+Thumbs.db
+desktop.ini
+._*
