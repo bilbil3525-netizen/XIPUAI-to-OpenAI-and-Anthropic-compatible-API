@@ -247,6 +247,12 @@ qwen3.6-27b
 - **账号会话上限 50**：adapter 已做自动清理，正常使用不会撞限。
 - **推理模型的思考 token 也计费**：积分消耗可能比预期高数倍。
 - **`jm-token` 会过期**：过期后重新运行 `auth_v4.py` 即可。
+- **单次请求上限 65,535 字节**：学校把每条请求存进 MySQL 的 `TEXT` 字段
+  （`lm_chat`.`lm_chat_record`.`user_text`），而 TEXT 上限就是 65,535 字节。
+  超出时**后端会把 MySQL 报错当成模型输出流式返回**，客户端只看到
+  `stream failed`，很容易误判成网络问题。
+  adapter 已自动处理：超出时丢弃**最旧**的历史（保留系统提示和当前提问），
+  并在日志里记录 `prompt too large ... dropped N oldest message(s)`。
 - **不支持 function calling / tools**：上游接口未提供对应能力。
 
 ---

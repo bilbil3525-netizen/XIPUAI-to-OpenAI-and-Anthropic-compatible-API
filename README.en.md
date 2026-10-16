@@ -254,6 +254,13 @@ owns the conversation context.
 - **50-session cap** per account — the adapter cleans up after itself.
 - **Reasoning tokens are billed too** — points burn faster than you'd expect.
 - **`jm-token` expires** — just re-run `auth_v4.py`.
+- **65,535 bytes per request** — the school stores each request in a MySQL
+  `TEXT` column (`lm_chat`.`lm_chat_record`.`user_text`), and TEXT caps at
+  65,535 **bytes**. Past that, the backend **streams the MySQL error back as if
+  it were model output**, so clients only see `stream failed` and mistake it for
+  a network problem. The adapter now trims automatically: it drops the OLDEST
+  history (keeping the system prompt and the current turn) and logs
+  `prompt too large ... dropped N oldest message(s)`.
 - **No function calling / tools** — the upstream API doesn't expose it.
 
 ---
