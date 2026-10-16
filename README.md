@@ -1,43 +1,61 @@
-# XJTLU Junmou AI → OpenAI / Anthropic compatible API
+# 西浦君谋 AI → OpenAI / Anthropic 双兼容 API
 
-> **Fork of [XIPUAI-to-openAI-compatible-API](https://github.com/sealeelike/XIPUAI-to-openAI-compatible-API)
-> by [@sealeelike](https://github.com/sealeelike)**
+**中文** | [English](README.en.md)
+
+> **Fork 自 [@sealeelike](https://github.com/sealeelike) 的
+> [XIPUAI-to-openAI-compatible-API](https://github.com/sealeelike/XIPUAI-to-openAI-compatible-API)**
 >
-> The upstream project targets the *old* XIPU AI platform and **stopped working**
-> after the 2026 redesign. This branch ports it to the new「君谋 AI」platform and
-> adds an Anthropic-compatible layer.
+> 原项目针对旧版 XIPU AI 平台，在 2026 年平台改版后**已无法运行**。
+> 本分支完成了对新版「君谋 AI」的适配，并补充了 Anthropic 兼容层，
+> 现在**同时支持 OpenAI 与 Anthropic 两套 API 格式**。
 
-> [!IMPORTANT]
-> Please read [DISCLAIMER](DISCLAIMER.md) first.
-> For personal study and educational research only.
-
-[中文文档](README-zh.md) | English
+把学校「君谋 AI」平台（原 XIPU AI）包装成标准 API，让 Cherry Studio、ChatBox、
+**Claude Code**、**CC Switch**、**Codex**、OpenAI SDK、Anthropic SDK
+等任意客户端都能直接调用校内的 `gpt-6-astra`、`claude-opus-5`、
+`DeepSeek-V4-pro` 等模型。
 
 ---
 
-## What changed vs upstream
+## 为什么是"双兼容"
 
-| | Upstream | **This branch** |
+上游只提供 OpenAI 格式（`/v1/chat/completions`），而 **Claude Code 说的是
+Anthropic Messages API**（`/v1/messages`），直接接入会 404。
+
+本分支新增了完整的翻译层，含流式事件映射，因此同一个服务可以同时服务两类客户端：
+
+| 客户端 | 使用端点 | 说明 |
 |---|---|---|
-| Platform | XIPU AI | **Junmou AI v26.0.1** |
-| Login flow | embedded form `#username_show` | ✅ **XJTLU SSO redirect** (`uim.xjtlu.edu.cn`) |
-| API base | `jmapi.xjtlu.edu.cn/api/chat` | ✅ **`xipuai.xjtlu.edu.cn/jmapi/api/chat`** |
-| `sdp-app-session` | hard requirement | ✅ **now optional** (header dropped upstream) |
-| Model list | 11 hardcoded (stale) | ✅ **18 fetched from `/config`** |
-| OpenAI format | ✅ | ✅ |
-| **Anthropic format** | ❌ | ✅ **new `/v1/messages`** (works with Claude Code) |
-| Request fingerprint | 8 headers (no `sec-fetch-*`) | ✅ **full browser set, 17 headers** |
-| Retry | ❌ | ✅ 3 attempts on session creation |
-| Session leaks | unhandled | ✅ orphan cleanup on startup |
-| Heartbeat cadence | fixed 1200s | ✅ ±7 min jitter |
-
-The full debugging trail is in **[`docs/REVERSE-ENGINEERING.md`](docs/REVERSE-ENGINEERING.md)**.
+| Cherry Studio / ChatBox / OpenAI SDK | `POST /v1/chat/completions` | OpenAI 格式 |
+| **Claude Code / CC Switch** | `POST /v1/messages` | Anthropic 格式（新增） |
+| **Codex** | `POST /v1/chat/completions` | 需设 `wire_api = "chat"` |
+| Anthropic SDK | `POST /v1/messages` | Anthropic 格式（新增） |
 
 ---
 
-## Quick start
+## 改版前后对比
 
-### 1. Environment
+| | 上游版本 | **本分支** |
+|---|---|---|
+| 平台版本 | XIPU AI | **君谋 AI v26.0.1** |
+| 登录流程 | 内嵌表单 `#username_show` | ✅ **XJTLU SSO 跳转**（`uim.xjtlu.edu.cn`） |
+| API 基址 | `jmapi.xjtlu.edu.cn/api/chat` | ✅ **`xipuai.xjtlu.edu.cn/jmapi/api/chat`** |
+| `sdp-app-session` | 硬依赖 | ✅ **改为可选**（新版已废弃该头） |
+| 模型列表 | 硬编码 11 个（过时） | ✅ **接口动态获取 18 个** |
+| OpenAI 格式 | ✅ | ✅ |
+| **Anthropic 格式** | ❌ | ✅ **新增 `/v1/messages`** |
+| 请求头指纹 | 8 个（缺 `sec-fetch-*`） | ✅ **补齐浏览器标准 17 个** |
+| 失败重试 | ❌ | ✅ 建会话重试 3 次 |
+| 会话泄漏 | 无处理 | ✅ 启动自动清理孤儿会话 |
+| 心跳节律 | 固定 1200s | ✅ ±7 分钟随机抖动 |
+
+排查过程完整记录在 **[`docs/REVERSE-ENGINEERING.md`](docs/REVERSE-ENGINEERING.md)**
+（含走错的路）。
+
+---
+
+## 快速开始
+
+### 1. 环境
 
 ```bash
 python -m venv .venv
@@ -45,62 +63,63 @@ python -m venv .venv
 # .venv/bin/pip install -r requirements-deployed.txt       # macOS / Linux
 ```
 
-> `requirements-deployed.txt` pins versions that are known to work.
-> `setuptools<81` (selenium-wire needs `pkg_resources`), `blinker==1.7.0`
-> and `cryptography==45.0.4` are all required — newer ones break.
+> `requirements-deployed.txt` 是实测可用的锁定版本。其中
+> `setuptools<81`（`selenium-wire` 依赖 `pkg_resources`）、
+> `blinker==1.7.0`、`cryptography==45.0.4` 是必须的，否则会报错。
 
-### 2. Credentials
+### 2. 配置账号
 
 ```bash
 copy .env.example .env
 ```
 
-Fill in your XJTLU account (username format: `Firstname.LastnameNN`).
+填入你的西浦账号（用户名格式 `Firstname.LastnameNN`）。
 
-### 3. Capture a token
+### 3. 抓 token
 
 ```bash
 .venv\Scripts\python auth_v4.py
 ```
 
-Drives a headless browser through the SSO flow and captures `jm-token`.
-The new SSO has **no captcha**. Falls back to Edge if Chrome isn't installed.
+脚本会用无头浏览器完成 SSO 登录并抓取 `jm-token`。新版 SSO **无验证码**。
 
-Manual fallback:
+> Chrome 未安装时会自动回退到 Edge。
+
+自动登录失败时可用手动方案：
 
 ```bash
 .venv\Scripts\python set_tokens.py
 ```
 
-Copy `jm-token` from DevTools → Network → filter `jmapi` → any request's
-Request Headers, then paste it in.
+从浏览器 DevTools → Network → 筛 `jmapi` → 任意请求的 Request Headers 里
+复制 `jm-token` 粘贴进去。
 
-### 4. Run
+### 4. 启动
 
 ```bash
-go-live.bat      # Windows: check tunnel -> refresh token -> restart service
+go-live.bat          # Windows：检测隧道 → 刷新 token → 重启服务
 ```
 
-Or manually:
+或手动：
 
 ```bash
 .venv\Scripts\python -m uvicorn adapter:app --host 0.0.0.0 --port 8899
 ```
 
-### 5. Point your client at it
+### 5. 接入客户端
 
-| Setting | Value |
+| 项目 | 值 |
 |---|---|
-| Base URL | `http://<host-ip>:8899/v1` |
-| API Key | any string, e.g. `xjtlu` |
+| Base URL | `http://<主机IP>:8899/v1` |
+| API Key | 任意字符串，例如 `xjtlu` |
 
-**Claude Code / CC Switch:**
+**Claude Code / CC Switch**（Anthropic 格式）：
 
 ```json
 {
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "xjtlu",
-    "ANTHROPIC_BASE_URL": "http://<host-ip>:8899",
+    "ANTHROPIC_BASE_URL": "http://<主机IP>:8899",
     "ANTHROPIC_MODEL": "claude-opus-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-5.2"
@@ -108,30 +127,73 @@ Or manually:
 }
 ```
 
-**Codex:**
+> 注意 `ANTHROPIC_BASE_URL` 填到端口即可，**不要**加 `/v1`。
+
+**Codex**（OpenAI 格式）：
 
 ```toml
 model_provider = "xjtlu"
 model = "gpt-6-astra"
 
 [model_providers.xjtlu]
-base_url = "http://<host-ip>:8899/v1"
-wire_api = "chat"          # Responses API is not implemented - must be "chat"
+base_url = "http://<主机IP>:8899/v1"
+wire_api = "chat"          # 本中转不实现 Responses API，必须用 chat
 requires_openai_auth = false
+```
+
+**OpenAI SDK：**
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://<主机IP>:8899/v1", api_key="xjtlu")
+r = client.chat.completions.create(
+    model="gpt-6-astra",
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(r.choices[0].message.content)
+```
+
+**Anthropic SDK：**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(base_url="http://<主机IP>:8899", api_key="xjtlu")
+r = client.messages.create(
+    model="claude-opus-5",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(r.content[0].text)
 ```
 
 ---
 
-## Endpoints
+## 接口
 
-| Endpoint | Format |
+| 端点 | 格式 |
 |---|---|
 | `GET /v1/models` | OpenAI |
-| `POST /v1/chat/completions` | OpenAI (streaming and non-streaming) |
-| `POST /v1/messages` | **Anthropic** (full streaming event set) |
+| `POST /v1/chat/completions` | OpenAI（支持流式 / 非流式） |
+| `POST /v1/messages` | **Anthropic**（含完整流式事件） |
 | `POST /v1/messages/count_tokens` | Anthropic |
 
-Models currently exposed (18 — refresh with `tools/get_models.py`):
+### 流式事件映射
+
+```
+上游 SSE                        →  Anthropic SSE
+data: {"data":"你"}             →  event: message_start
+data: {"data":"好"}             →  event: content_block_start
+data: [DONE]                    →  event: content_block_delta（每分片一次）
+                                   event: content_block_stop
+                                   event: message_delta
+                                   event: message_stop
+```
+
+### 可用模型
+
+以 `tools/get_models.py` 实时拉取为准，当前 **18 个**：
 
 ```
 gpt-6-astra          gpt-5.6-sol         gpt-5.6-terra      gpt-5.6-luna
@@ -144,63 +206,68 @@ qwen3.6-27b
 
 ---
 
-## Tools
+## 工具
 
-| Script | Purpose |
+| 脚本 | 用途 |
 |---|---|
-| `auth_v4.py` | Headless SSO login, captures `jm-token` |
-| `set_tokens.py` | Paste a token manually |
-| `go-live.bat` | One-click: tunnel check → token refresh → restart |
-| `tools/get_models.py` | Fetch the live model list (`--json`) |
-| `tools/check_sessions.py` | Inspect / clean account sessions (`--clean`) |
-| `tools/install_autostart.ps1` | Register a logon autostart task (`-Remove`) |
+| `auth_v4.py` | 新版 SSO 自动登录 + 抓 token |
+| `set_tokens.py` | 手动粘贴 token（自动登录失败时用） |
+| `go-live.bat` | 一键：检测隧道 → 刷新 token → 重启服务 |
+| `tools/get_models.py` | 拉取实时模型列表（`--json` 输出数组） |
+| `tools/check_sessions.py` | 查看/清理账号会话（`--clean`） |
+| `tools/install_autostart.ps1` | 注册开机自启计划任务（`-Remove` 卸载） |
 
 ---
 
-## How it works
+## 工作原理
 
 ```
-client (OpenAI / Anthropic format)
-   │
-   ▼
-adapter.py  (FastAPI)
-   ├── (1) saveSession   create session with model/temperature/max_tokens
-   ├── (2) completions   streaming completion
-   └── (3) delSession    delete when done
-   │  with jm-token header
-   ▼
-school platform  https://xipuai.xjtlu.edu.cn/jmapi/api/chat
+客户端
+  ├── OpenAI 格式    POST /v1/chat/completions
+  └── Anthropic 格式 POST /v1/messages
+         │
+         ▼
+    adapter.py  (FastAPI)
+       ├── ① saveSession   建会话（带 model / temperature / max_tokens）
+       ├── ② completions   流式对话
+       └── ③ delSession    用完即焚
+       │  带 jm-token 头
+       ▼
+    学校平台  https://xipuai.xjtlu.edu.cn/jmapi/api/chat
 ```
 
-Stateless by design: every request is create → use → destroy, and the client
-owns the conversation context.
+每次请求都走「创建 → 使用 → 销毁」的无状态模式，上下文由客户端负责维护。
 
 ---
 
-## Known limitations
+## 已知限制
 
-- **Rate limited**: the platform returns `Request too fast` if you hammer it.
-  The adapter inserts a 1s delay; don't run concurrent bursts.
-- **50-session cap** per account — the adapter cleans up after itself.
-- **Reasoning tokens are billed too** — so points burn faster than you'd expect.
-- **`jm-token` expires** — just re-run `auth_v4.py`.
+- **平台接口有速率限制**：连续请求过快会返回 `Request too fast`。
+  adapter 内置 1 秒延迟，但请勿并发轰炸。
+- **账号会话上限 50**：adapter 已做自动清理，正常使用不会撞限。
+- **推理模型的思考 token 也计费**：积分消耗可能比预期高数倍。
+- **`jm-token` 会过期**：过期后重新运行 `auth_v4.py` 即可。
+- **不支持 function calling / tools**：上游接口未提供对应能力。
 
 ---
 
-## License & disclaimer
+## 许可证与免责声明
 
-Released under the upstream license,
+本项目沿用上游的
 **[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)**
-(Attribution-NonCommercial-ShareAlike).
+（署名 - 非商业性使用 - 相同方式共享）协议。
 
-- **Attribution** — original author [@sealeelike](https://github.com/sealeelike)
-- **NonCommercial** — no commercial use
-- **ShareAlike** — derivatives must use the same license
+- **署名**：原项目作者 [@sealeelike](https://github.com/sealeelike)
+- **非商业**：不得用于商业用途
+- **相同方式共享**：衍生作品必须使用相同协议
 
-See [`LICENCE`](LICENCE) and [`DISCLAIMER.md`](DISCLAIMER.md).
+详见 [`LICENCE`](LICENCE) 与 [`DISCLAIMER.md`](DISCLAIMER.md)。
 
-> **For personal study and educational research only.**
-> Comply with XJTLU's Junmou AI Terms of Use.
-> Do not share your token or expose this service to others — it adds load to
-> university infrastructure and may violate university policy.
-> You are responsible for any consequences of using this tool.
+> **仅供个人学习与教育研究用途。**
+> 请遵守西交利物浦大学《君谋 AI 平台使用规范》。
+> 请勿分享你的 token 或对外提供服务 —— 这会给学校服务器带来额外负载，
+> 也可能违反校规。使用本工具产生的一切后果由使用者自行承担。
+
+---
+
+**中文** | [English](README.en.md)
