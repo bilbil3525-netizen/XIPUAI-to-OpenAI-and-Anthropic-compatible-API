@@ -1,204 +1,202 @@
-# XIPUAI-to-openAI-compatible-API
+# XJTLU 君谋 AI → OpenAI / Anthropic 兼容 API
 
-## 目录
-[English](README.md)/[简体中文](README-zh.md)
-- [概述](#概述)
-- [背景](#背景)
-- [如何使用](#如何使用)
-  - [依赖项概览](#依赖项概览)
-  - [具体操作](#具体操作)
-- [原理讲解](#原理讲解)
-- [我们踩过的那些“天坑”与深刻教训](#我们踩过的那些天坑与深刻教训)
-- [常见报错](#常见报错信息原因措施)
-- [To do list](#to-do-list)
+> **Fork 自 [@sealeelike](https://github.com/sealeelike) 的
+> [XIPUAI-to-openAI-compatible-API](https://github.com/sealeelike/XIPUAI-to-openAI-compatible-API)**
+>
+> 原项目针对旧版 XIPU AI 平台，在 2026 年平台改版后**已无法运行**。
+> 本分支完成了对新版「君谋 AI」的适配，并补充了 Anthropic 兼容层。
 
-## 概述
-
-把xipuAI网页服务转化成API调用服务，支持知识库，上下文，联网搜索，temperature···
-
-点击视频链接预览效果 https://drive.google.com/file/d/1-OGXcUYPfYZpAO9FbemmOAfxXSMPdFfM/view?usp=sharing
-
-## 背景
-之前看到有人把 Google AI Studio 逆向成 openAI格式 的API服务，用以免费使用时兴的 2.5pro(https://github.com/CJackHwang/AIstudioProxyAPI)
-我看到洗脚利物浦xipuAI平台上的 o3，sonnet3.7等昂贵模型，不由冒出了同样的想法。
-
-
-## 如何使用
-
-### 依赖项概览
-
-- 需要xjtlu师/生账号
-- 可[点此](libraries)查看库
-- win11开发
-- auth模块需使用chrome浏览器
-- 使用对话客户端，比如[cherry studio](https://github.com/CherryHQ/cherry-studio.git)，或者[deepchat](https://github.com/ThinkInAIXYZ/deepchat.git)
-
-### 具体操作
-
-#### 环境搭建
-- 把[环境配置](environment.yml)下载到本地的某个空文件夹
-- 在该文件夹打开cmd
-- 使用conda复制环境
-  `conda env create -f environment.yml`
-- 激活环境
-  `conda activate genai_project`
-
-
-#### 初始配置
-- 在刚刚的窗口运行[密码配置模块](config.py)
-  `python config.py`
-
-  输入你的西浦内部账号密码。脚本会生成一个.env文件，储存你的信息。这样以后就不需要重复输入密码了， _保护好个人信息哦！！_
-- 运行[获取令牌脚本](auth.py)
-  `python auth.py`
-  全程无需任何操作，等待终端提示即可。
-  （电脑需要安装chrome浏览器）
-- 启动[adapter服务](xjtlu_adapter_final.py)
-  `uvicorn adapter:app --reload`
-
-  同时会在项目文件夹内生成log文件夹，里面有日志
-- 桌面客户端对接
-  新建服务商，类型openAI compatible，apiKEY随便写几个英文字母，baseurl`http://127.0.0.1:8000/v1/chat/completions`。
-
-  拉取提供的模型。模型列表是程序内置的，无法实时获取。直接填写模型id会被传递到web服务。
-
-#### 尝试使用
-新建一个会话，选择模型并尝试会话
-
-
-
-## 原理讲解
-
-### config.py
-
-这只是一个简单的密码存储脚本。
-
-用户用它输入一次用户名和密码，它写入根目录env文件。这样以后就可以自动读取，不用重复输入。
-
----
-### auth.py
-
-- 获取env文件里的用户名密码
-- 启动临时chrome窗口
-- 模拟用户填写密码，点击“log in”
-- 截获所需的令牌，存储到env文件。
-
-每次获取新令牌都会覆盖老令牌
+把学校「君谋 AI」平台（原 XIPU AI）包装成标准 API，让 Cherry Studio、ChatBox、
+Claude Code、CC Switch、OpenAI SDK 等任意客户端都能直接调用校内的
+`gpt-6-astra`、`claude-opus-5`、`DeepSeek-V4-pro` 等模型。
 
 ---
 
-### expire.py
-使用base64解码同目录下`.env`的JWT_TOKEN，获得相关信息。仅用于探索，不影响实际使用效果。
+## 改版前后对比
+
+| | 上游版本 | **本分支** |
+|---|---|---|
+| 平台版本 | XIPU AI | **君谋 AI v26.0.1** |
+| 登录流程 | 内嵌表单 `#username_show` | ✅ **XJTLU SSO 跳转**（`uim.xjtlu.edu.cn`） |
+| API 基址 | `jmapi.xjtlu.edu.cn/api/chat` | ✅ **`xipuai.xjtlu.edu.cn/jmapi/api/chat`** |
+| `sdp-app-session` | 硬依赖 | ✅ **改为可选**（新版已废弃该头） |
+| 模型列表 | 硬编码 11 个（过时） | ✅ **接口动态获取 18 个** |
+| OpenAI 格式 | ✅ | ✅ |
+| **Anthropic 格式** | ❌ | ✅ **新增 `/v1/messages`**（Claude Code 可用） |
+| 请求头指纹 | 8 个（缺 `sec-fetch-*`） | ✅ **补齐浏览器标准 17 个** |
+| 失败重试 | ❌ | ✅ 建会话重试 3 次 |
+| 会话泄漏 | 无处理 | ✅ 启动自动清理孤儿会话 |
+| 心跳节律 | 固定 1200s | ✅ ±7 分钟随机抖动 |
+
+排查过程记录在 **[`docs/REVERSE-ENGINEERING.md`](docs/REVERSE-ENGINEERING.md)**。
 
 ---
 
-### precheck.py & run.bat
-代替用户手动输入命令，完成部分自检工作。
+## 快速开始
 
-```mermaid
-flowchart TD
-    Start --> A[查找 .env 文件]
+### 1. 环境
 
-    A -- 不存在 --> C[运行 config.py]
-    A -- 存在 --> B{加载并检查环境变量}
-    B --> B1
-
-    B1[检查凭据] --> B2{凭据存在?}
-    B2 -- 否 --> C
-    B2 -- 是 --> B3[检查令牌]
-    B3 --> B4{令牌存在?}
-    B4 -- 否 --> D[运行 auth.py]
-    B4 -- 是 --> E[运行 tokentest.py]
-
-
-    C -- 成功 --> D
-    
-    E -- 令牌有效 --> F[启动服务]
-    E -- 令牌无效 --> D
-
-    D -- 成功 --> F
-    
-    C -- 失败 --> Z[程序退出]
-    D -- 失败 --> Z
-    F -- 失败 --> Z
-
-    F -- 成功 --> H[服务运行中]
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r requirements-deployed.txt     # Windows
+# .venv/bin/pip install -r requirements-deployed.txt       # macOS / Linux
 ```
 
+> `requirements-deployed.txt` 是实测可用的锁定版本。其中
+> `setuptools<81`（`selenium-wire` 依赖 `pkg_resources`）、
+> `blinker==1.7.0`、`cryptography==45.0.4` 是必须的，否则会报错。
+
+### 2. 配置账号
+
+```bash
+copy .env.example .env
+```
+
+填入你的西浦账号（用户名格式 `Firstname.LastnameNN`）。
+
+### 3. 抓 token
+
+```bash
+.venv\Scripts\python auth_v4.py
+```
+
+脚本会用无头浏览器完成 SSO 登录并抓取 `jm-token`。新版 SSO **无验证码**。
+
+> Chrome 未安装时会自动回退到 Edge。
+
+自动登录失败时可用手动方案：
+
+```bash
+.venv\Scripts\python set_tokens.py
+```
+
+从浏览器 DevTools → Network → 筛 `jmapi` → 任意请求的 Request Headers 里
+复制 `jm-token` 粘贴进去。
+
+### 4. 启动
+
+```bash
+go-live.bat          # Windows：检测隧道 → 刷新 token → 重启服务
+```
+
+或手动：
+
+```bash
+.venv\Scripts\python -m uvicorn adapter:app --host 0.0.0.0 --port 8899
+```
+
+### 5. 接入客户端
+
+| 项目 | 值 |
+|---|---|
+| Base URL | `http://<主机IP>:8899/v1` |
+| API Key | 任意字符串，例如 `xjtlu` |
+
+**Claude Code / CC Switch：**
+
+```json
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "xjtlu",
+    "ANTHROPIC_BASE_URL": "http://<主机IP>:8899",
+    "ANTHROPIC_MODEL": "claude-opus-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-5.2"
+  }
+}
+```
+
+**Codex：**
+
+```toml
+model_provider = "xjtlu"
+model = "gpt-6-astra"
+
+[model_providers.xjtlu]
+base_url = "http://<主机IP>:8899/v1"
+wire_api = "chat"          # 本中转不实现 Responses API，必须用 chat
+requires_openai_auth = false
+```
 
 ---
-### adapter.py
 
+## 接口
 
-当桌面客户端（如cherry studio）向我们的适配器发起一次对话请求时，会发生以下一系列事件：
+| 端点 | 格式 |
+|---|---|
+| `GET /v1/models` | OpenAI |
+| `POST /v1/chat/completions` | OpenAI（支持流式 / 非流式） |
+| `POST /v1/messages` | **Anthropic**（Claude Code，含完整流式事件） |
+| `POST /v1/messages/count_tokens` | Anthropic |
 
-1.  **接收请求 (`chat_proxy`)**:
-    *   FastAPI 接收到一个符合OpenAI格式的 `POST /v1/chat/completions` 请求。
-    *   我们立即解析这个请求的JSON内容，里面包含了 `model`, `temperature`, `messages` 数组等所有信息。
+可用模型（以 `tools/get_models.py` 实时拉取为准，当前 18 个）：
 
-2.  **创建独立会话 (`create_new_session`)**:
-    *   这是整个流程的**基石**。我们**立即**向学校的 `saveSession` 接口发起一个`POST`请求。
-    *   这个请求的Payload里，我们一次性把从客户端请求中获取的`model`, `temperature`等参数全部带上。
-    *   **核心认知**: 我们最终发现，这个接口支持在创建会话的同时就配置好所有参数，一步到位。
-    *   服务器返回一个全新的、独一无二的 `sessionId`。这个会话就像一个“一次性沙盒”，专门为本次对话服务。
-
-3.  **构建完整上下文 (`prompt_parts` & `join`)**:
-    *   我们读取`messages`数组里的所有内容（包括`system`, `user`, `assistant`的角色和对话）。
-    *   我们采用最简单、最直接的方式，将它们拼接成一个巨大的、单一的文本字符串，格式为 `角色: 内容`，并用换行符隔开。
-    *   **核心认知**: 我们最终确认，后端服务器非常强大，它能够自行处理这种包含大量原始文本、甚至含有Markdown和代码片段的“大杂烩”Prompt，我们无需在客户端做任何复杂的提示词工程或内容截断。
-
-4.  **关键的策略性延迟 (`asyncio.sleep`)**:
-    *   在成功创建会话并准备好`prompt`之后，我们**故意让程序暂停一小段时间**（`INTER_REQUEST_DELAY`，通常是1秒）。
-    *   **核心认知**: 这是整个项目能够稳定运行的**命脉**。它解决了困扰我们许久的`429 Too Many Requests`问题。其根本原因是，服务器对**总的API请求频率**有限制，而不是针对单个接口。这个延迟将“创建会话”和“发送对话”这两个网络请求在时间上拉开了足够的距离，模拟了真实用户的操作间隔，从而完美地规避了速率限制。
-
-5.  **发送对话并流式响应 (`stream_generator`)**:
-    *   延迟结束后，我们向学校的 `completions` 接口发起一个**流式** `POST` 请求。
-    *   Payload里包含了刚刚创建的 `sessionId` 和那个巨大的 `full_prompt`。
-    *   我们实时地接收从服务器流过来的文本块，将它们重新包装成OpenAI格式的`chunk`，再实时地发回给桌面客户端。这保证了用户能看到“打字机”效果。
-
-6.  **用后自动清理 (`finally` & `delete_session`)**:
-    *   当对话流结束时（无论是正常完成还是中途出错），`stream_generator`中的 `finally` 块会被触发。
-    *   **核心认知**: 我们发现服务器对用户能拥有的会话总数有限制（50个）。为了不耗尽这个资源池，我们必须“用完即焚”。
-    *   `finally` 块会启动一个**后台异步任务**，调用 `delete_session` 函数。
-    *   这个后台任务会向学校的 `delSession` 接口发起一个`POST`请求，Payload里包含了刚刚使用过的那个`sessionId`，将其从服务器上彻底删除。
-    *   这个“垃圾回收”机制是“无状态”模式能长期运行的保证。
-
-这个流程形成了一个完美的闭环：**创建 -> 使用 -> 销毁**，每一次对话都是一次全新的、独立的、不依赖服务器历史状态的交互，完全由桌面客户端掌控上下文。
+```
+gpt-6-astra          gpt-5.6-sol         gpt-5.6-terra      gpt-5.6-luna
+gpt-5.5              gpt-5.4             gpt-5.4-mini       gpt-5.4-nano
+claude-opus-5        claude-sonnet-5     GLM-5.2
+DeepSeek-V4-pro      DeepSeek-V4-flash   deepseek-v4-flash-local
+Doubao-Seed-2.1-pro  Doubao-Seed-2.0-pro Doubao-Seed-2.0-lite
+qwen3.6-27b
+```
 
 ---
 
-### 我们踩过的那些“天坑”与深刻教训
+## 工具
 
-这次旅程就像是在迷雾中航行，我们根据有限的线索制定航线，撞上冰山，再重新校准方向。
+| 脚本 | 用途 |
+|---|---|
+| `auth_v4.py` | 新版 SSO 自动登录 + 抓 token |
+| `set_tokens.py` | 手动粘贴 token（自动登录失败时用） |
+| `go-live.bat` | 一键：检测隧道 → 刷新 token → 重启服务 |
+| `tools/get_models.py` | 拉取实时模型列表（`--json` 输出数组） |
+| `tools/check_sessions.py` | 查看/清理账号会话（`--clean`） |
+| `tools/install_autostart.ps1` | 注册开机自启计划任务（`-Remove` 卸载） |
 
-#### 坑1：上下文处理的“左右横跳”
+---
 
-*   **症状**: 模型似乎“失忆”，无法理解多轮对话，或者对包含知识库的长文本返回“我不懂”。
-*   **最初的尝试 (v1-v4)**: 我们简单地将所有历史记录拼接成一个大字符串。这在简单对话中可行，但在处理复杂知识库时失败了。
-*   **错误的转向 (v4 - “会话状态”模拟)**: 我们错误地认为应该模拟Web端的有状态行为，即每次只发送最后一条用户消息，并依赖服务器的`sessionId`来记住上下文。**这是我们最大的弯路**，因为它违背了我们构建“由客户端控制上下文”的无状态API的初衷。这导致模型完全没有上下文，自然无法正确回答。
-*   **再次尝试 (v8 - “会话注入”)**: 我们想出了一个“聪明”的办法，试图通过多次POST请求来在服务器端一轮一轮地重建上下文。结果因为过于频繁的请求而失败。
-*   **最终的顿悟 (v10)**: 你的观察——“Web端能一次性吞下大块文本”——让我们意识到，最简单的方法反而是正确的。问题不在于“如何发送上下文”，而在于**后端能处理什么样的上下文**以及**我们发送得有多快**。
+## 工作原理
 
-#### 坑2：神秘的“异步”问题与429错误
+```
+客户端 (OpenAI / Anthropic 格式)
+   │
+   ▼
+adapter.py  (FastAPI)
+   ├── ① saveSession   建会话（带 model / temperature / max_tokens）
+   ├── ② completions   流式对话
+   └── ③ delSession    用完即焚
+   │  带 jm-token 头
+   ▼
+学校平台  https://xipuai.xjtlu.edu.cn/jmapi/api/chat
+```
 
-*   **症状**: 频繁出现 `Request too fast` 或 `429 Too Many Requests` 错误。
-*   **最初的尝试 (v2/v3 - “弹药库”模式)**: 我们设计了一个非常精巧的异步“弹药库”（`session_id_ammo_box`），在处理当前请求的同时，就去后台预取下一个会话ID。这个设计的本意是提高效率。
-*   **致命的并发**: 问题在于，这个后台的“预取”请求（`saveSession`）和前台的“更新参数”请求（也是`saveSession`）在**毫秒级内同时发生**了。服务器的速率限制机制立刻将这种**并发访问**判定为异常，导致了失败。
-*   **错误的解决方案 (v8 - “会话注入”)**: 我们废除了“弹药库”，但新的“会话注入”逻辑引入了更密集的请求序列，同样触发了速率限制。
-*   **最终的顿悟 (v6, v10)**: 我们终于意识到，**问题的关键不是并发，而是频率**。我们不需要复杂的异步队列，只需要在**连续的API调用之间加入一个简单的、模拟人类行为的`asyncio.sleep()`**。这个小小的延迟，才是解决所有速率限制问题的“银弹”。
+每次请求都走「创建 → 使用 → 销毁」的无状态模式，上下文由客户端负责维护。
 
-#### 坑3：对错误信息的误读
+---
 
-*   **症状**: 服务器返回的429错误信息里写着`...adjust the length of the context...`。
-*   **错误的归因 (v9)**: 我们信了这条信息，认为是文本太长导致了问题。于是我们开发了“智能截断”模块。
-*   **成功的巧合**: 这个截断模块虽然是基于错误的前提，但它**碰巧成功了**。我们后来才意识到，成功的原因不是截断本身，而是它附带的**请求延迟**，以及它可能**无意中清除了文本中的“毒性”字符**。
-*   **最终的顿悟 (v10)**: 你的最终测试证明了，即使不截断，只要有延迟，后端也能处理长文本。这告诉我们一个深刻的教训：**API返回的错误信息不一定能准确地揭示问题的根本原因**，它有时会是“烟雾弹”。逆向工程需要大胆假设，更要小心求证。
+## 已知限制
 
-## 常见报错信息，原因，措施
-|报错|原因|措施|
-|--|--|--|
-|`403`|令牌过期|重新运行auth.py|
-|`don't have relevant knowledge`|输入“毒文本”，后端无法阅读|删除该会话最后一次对话|
+- **平台接口有速率限制**：连续请求过快会返回 `Request too fast`。
+  adapter 内置 1 秒延迟，但请勿并发轰炸。
+- **账号会话上限 50**：adapter 已做自动清理，正常使用不会撞限。
+- **推理模型的思考 token 也计费**：积分消耗可能比预期高数倍。
+- **`jm-token` 会过期**：过期后重新运行 `auth_v4.py` 即可。
 
-## To do list
-- [ ] 自动化保活
+---
+
+## 许可证与免责声明
+
+本项目沿用上游的
+**[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)**
+（署名 - 非商业性使用 - 相同方式共享）协议。
+
+- **署名**：原项目作者 [@sealeelike](https://github.com/sealeelike)
+- **非商业**：不得用于商业用途
+- **相同方式共享**：衍生作品必须使用相同协议
+
+详见 [`LICENCE`](LICENCE) 与 [`DISCLAIMER.md`](DISCLAIMER.md)。
+
+> **仅供个人学习与教育研究用途。**
+> 请遵守西交利物浦大学《君谋 AI 平台使用规范》。
+> 请勿分享你的 token 或对外提供服务 —— 这会给学校服务器带来额外负载，
+> 也可能违反校规。使用本工具产生的一切后果由使用者自行承担。

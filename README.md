@@ -1,221 +1,206 @@
-# XIPUAI-to-OpenAI-compatible-API
+# XJTLU Junmou AI → OpenAI / Anthropic compatible API
+
+> **Fork of [XIPUAI-to-openAI-compatible-API](https://github.com/sealeelike/XIPUAI-to-openAI-compatible-API)
+> by [@sealeelike](https://github.com/sealeelike)**
+>
+> The upstream project targets the *old* XIPU AI platform and **stopped working**
+> after the 2026 redesign. This branch ports it to the new「君谋 AI」platform and
+> adds an Anthropic-compatible layer.
+
 > [!IMPORTANT]
-> Please read [DISCLAIMER](DISCLAIMER.md) first
-## Table of Contents
+> Please read [DISCLAIMER](DISCLAIMER.md) first.
+> For personal study and educational research only.
 
-[English](README.md)/[简体中文](README-zh.md)
-
-
-- [Overview](#overview)
-- [Background](#background)
-- [How to Use](#how-to-use)
-  - [Prerequisites](#prerequisites)
-  - [Step-by-Step Guide](#step-by-step-guide)
-- [How It Works](#how-it-works)
-- [Pitfalls & Lessons Learned](#pitfalls--lessons-learned)
-- [Common Errors](#common-errors)
-- [To do list](#to-do-list)
-
-## Overview
-
-This project transforms the XIPUAI web service into an OpenAI-compatible API, enabling API calls that support knowledge bases, context, web search, temperature settings, and more.
-
-
-> [!TIP]
-> Click the video link for a preview: https://drive.google.com/file/d/1-OGXcUYPfYZpAO9FbemmOAfxXSMPdFfM/view?usp=sharing
-
-
-## Background
-I was inspired by a project that reverse-engineered Google AI Studio into an OpenAI-formatted API service, allowing free use of the popular Gemini 2.5 Pro model ([CJackHwang/AIstudioProxyAPI](https://github.com/CJackHwang/AIstudioProxyAPI)).
-Seeing expensive models like Claude 3 Opus and Sonnet 3.7 on the XJTLU AI platform (a playful nickname for which is Xipu AI), I had the same idea.
-
-## How to Use
-
-### Prerequisites
-
-- An XJTLU student or staff account.
-- See [libraries](libraries) for a list of dependencies.
-- Developed on Windows 11.
-- The `auth` module requires the Google Chrome browser to be installed.
-- A chat client that supports OpenAI-compatible APIs, such as [Cherry Studio](https://github.com/CherryHQ/cherry-studio.git) or [DeepChat](https://github.com/ThinkInAIXYZ/deepchat.git).
-
-### Step-by-Step Guide
-
-#### Environment Setup
-- Download the [environment.yml](environment.yml) file to an empty local folder.
-- Open a command prompt or terminal in that folder.
-- Create the conda environment from the file:
-  `conda env create -f environment.yml`
-
-#### Start the service
-##### Method 1: Using Automation Scripts
-- double click `run.bat`
-##### Method 2: Manual configuration
-- Activate the environment:
-  `conda activate genai_project`
-- In the same terminal window, run the configuration script:
-  `python config.py`
-
-  Enter your XJTLU username and password. The script will generate a `.env` file to store your credentials, so you won't have to enter them again.
-
-> [!WARNING]
-> _Please take care of your privacy and never share the `.env` file with others!_
-
-- Run the authentication script to get a token:
-  `python auth.py`
-  No user interaction is required during this step; just wait for the terminal to confirm completion. (This requires Google Chrome to be installed).
-- Start the adapter service:
-  `uvicorn adapter:app --reload`
-
-  This will also create a `log` folder in the project directory for storing logs.
-
-#### Trying It Out
-- Connect your Desktop Client:
-  Create a new provider, select the 'OpenAI Compatible' type. The API Key can be any random string of letters. Set the Base URL to `http://127.0.0.1:8000/v1/chat/completions` (`http://host.docker.internal:8000/v1` for Dify in docker).
-
-  Fetch the available models. The model list is hardcoded in the program and cannot be fetched in real-time. Directly entering a valid model ID will pass it to the web service.
-- Start a new chat, select a model, and begin your conversation.
-
-## How It Works
-
-### config.py
-
-This is a simple script for storing credentials. The user enters their username and password once, and the script writes them to a `.env` file in the root directory. This allows for automatic credential loading in the future, avoiding repetitive input.
-
----
-### auth.py
-
-- Retrieves the username and password from the `.env` file.
-- Launches a temporary Chrome window.
-- Simulates the user entering their credentials and clicking "Log In".
-- Intercepts the necessary authentication token and saves it to the `.env` file.
-
-  Each time a new token is fetched, it overwrites the old one.
+[中文文档](README-zh.md) | English
 
 ---
 
-### expire.py
-Use base64 to decode the JWT_TOKEN in the `.env` in the same directory to obtain relevant information. This is only used for exploration and does not affect the actual use effect.
+## What changed vs upstream
+
+| | Upstream | **This branch** |
+|---|---|---|
+| Platform | XIPU AI | **Junmou AI v26.0.1** |
+| Login flow | embedded form `#username_show` | ✅ **XJTLU SSO redirect** (`uim.xjtlu.edu.cn`) |
+| API base | `jmapi.xjtlu.edu.cn/api/chat` | ✅ **`xipuai.xjtlu.edu.cn/jmapi/api/chat`** |
+| `sdp-app-session` | hard requirement | ✅ **now optional** (header dropped upstream) |
+| Model list | 11 hardcoded (stale) | ✅ **18 fetched from `/config`** |
+| OpenAI format | ✅ | ✅ |
+| **Anthropic format** | ❌ | ✅ **new `/v1/messages`** (works with Claude Code) |
+| Request fingerprint | 8 headers (no `sec-fetch-*`) | ✅ **full browser set, 17 headers** |
+| Retry | ❌ | ✅ 3 attempts on session creation |
+| Session leaks | unhandled | ✅ orphan cleanup on startup |
+| Heartbeat cadence | fixed 1200s | ✅ ±7 min jitter |
+
+The full debugging trail is in **[`docs/REVERSE-ENGINEERING.md`](docs/REVERSE-ENGINEERING.md)**.
 
 ---
 
-### precheck.py & run.bat
-Run commands in sequence to avoid manual input by the user
-```mermaid
-graph TD
-    subgraph precheck.py
-        A{.env file exist?}
-        A --exist--> D{username & password exist?}
-        A --does not exist--> 1
+## Quick start
 
-        D --all exist--> F{tokens exist?}
-        D --dose not exist--> 1
+### 1. Environment
 
-        F --D.N.E.--> 2
-        F --exist--> H{heartbeat session exist?}
-        H --exist--> I{tokentest.py}
-        H --D.N.E.--> 2
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r requirements-deployed.txt     # Windows
+# .venv/bin/pip install -r requirements-deployed.txt       # macOS / Linux
+```
 
+> `requirements-deployed.txt` pins versions that are known to work.
+> `setuptools<81` (selenium-wire needs `pkg_resources`), `blinker==1.7.0`
+> and `cryptography==45.0.4` are all required — newer ones break.
 
-        I --EXPIRE--> 2
-        I --valid--> 0
-    end
-    subgraph run.bat
-        a[start] --> b[conda environment check] --> c[activate 'genai_project' environment] --> d[run precheck.py] --> A
-        1 --> config.py --> auth.py --> e[uvicorn service start]
-        2 --> auth.py
-        0 --> e
-    end
+### 2. Credentials
 
+```bash
+copy .env.example .env
+```
+
+Fill in your XJTLU account (username format: `Firstname.LastnameNN`).
+
+### 3. Capture a token
+
+```bash
+.venv\Scripts\python auth_v4.py
+```
+
+Drives a headless browser through the SSO flow and captures `jm-token`.
+The new SSO has **no captcha**. Falls back to Edge if Chrome isn't installed.
+
+Manual fallback:
+
+```bash
+.venv\Scripts\python set_tokens.py
+```
+
+Copy `jm-token` from DevTools → Network → filter `jmapi` → any request's
+Request Headers, then paste it in.
+
+### 4. Run
+
+```bash
+go-live.bat      # Windows: check tunnel -> refresh token -> restart service
+```
+
+Or manually:
+
+```bash
+.venv\Scripts\python -m uvicorn adapter:app --host 0.0.0.0 --port 8899
+```
+
+### 5. Point your client at it
+
+| Setting | Value |
+|---|---|
+| Base URL | `http://<host-ip>:8899/v1` |
+| API Key | any string, e.g. `xjtlu` |
+
+**Claude Code / CC Switch:**
+
+```json
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "xjtlu",
+    "ANTHROPIC_BASE_URL": "http://<host-ip>:8899",
+    "ANTHROPIC_MODEL": "claude-opus-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-5.2"
+  }
+}
+```
+
+**Codex:**
+
+```toml
+model_provider = "xjtlu"
+model = "gpt-6-astra"
+
+[model_providers.xjtlu]
+base_url = "http://<host-ip>:8899/v1"
+wire_api = "chat"          # Responses API is not implemented - must be "chat"
+requires_openai_auth = false
 ```
 
 ---
-### adapter.py
-#### How it transforms web services into API services？
-The core concept is to package each user request (including context) into a single block of text and send it to the web service.
 
-When a desktop client (like Cherry Studio) sends a chat request to our adapter, the following sequence of events unfolds:
+## Endpoints
 
-1.  **Receive the Request (`chat_proxy`)**:
-    *   FastAPI receives a `POST /v1/chat/completions` request that conforms to the OpenAI format.
-    *   We immediately parse the JSON payload, which contains the `model`, `temperature`, `messages` array, and all other necessary information.
+| Endpoint | Format |
+|---|---|
+| `GET /v1/models` | OpenAI |
+| `POST /v1/chat/completions` | OpenAI (streaming and non-streaming) |
+| `POST /v1/messages` | **Anthropic** (full streaming event set) |
+| `POST /v1/messages/count_tokens` | Anthropic |
 
-2.  **Create an Independent Session (`create_new_session`)**:
-    *   This is the **cornerstone** of the entire process. We **immediately** send a `POST` request to the school's `saveSession` endpoint.
-    *   The payload of this request includes all parameters from the client's request, such as `model` and `temperature`.
-    *   **Key Insight**: We discovered that this endpoint allows us to configure all parameters at the moment of session creation, getting everything done in one step.
-    *   The server returns a brand new, unique `sessionId`. This session acts as a "disposable sandbox" dedicated solely to this single chat request.
+Models currently exposed (18 — refresh with `tools/get_models.py`):
 
-3.  **Construct the Full Context (`prompt_parts` & `join`)**:
-    *   We read the entire `messages` array (including `system`, `user`, and `assistant` roles and their content).
-    *   We use the simplest, most direct method: concatenating them into a single, massive text string formatted as `Role: Content`, separated by newlines.
-    *   **Key Insight**: We confirmed that the backend server is powerful enough to process this "kitchen sink" prompt containing raw text, Markdown, and code snippets. We don't need to perform complex prompt engineering or content truncation on our end.
-
-4.  **The Crucial Strategic Delay (`asyncio.sleep`)**:
-    *   After successfully creating the session and preparing the `prompt`, we **intentionally pause the program** for a short period (`INTER_REQUEST_DELAY`, typically 1 second).
-    *   **Key Insight**: This is the **lifeline** that ensures the project's stability. It solves the `429 Too Many Requests` error that plagued us for so long. The root cause was a limit on the **overall API request frequency**, not on any single endpoint. This delay creates a sufficient time gap between the "create session" and "send chat" network requests, mimicking real user behavior and perfectly circumventing the rate limit.
-
-5.  **Send the Chat and Stream the Response (`stream_generator`)**:
-    *   After the delay, we send a **streaming** `POST` request to the school's `completions` endpoint.
-    *   The payload contains the `sessionId` we just created and the massive `full_prompt`.
-    *   We receive text chunks from the server in real-time, repackage them into OpenAI-formatted `chunks`, and stream them back to the desktop client. This provides the "typewriter" effect for the user.
-
-6.  **Automatic Cleanup (`finally` & `delete_session`)**:
-    *   When the chat stream ends (whether normally or due to an error), the `finally` block in the `stream_generator` is triggered.
-    *   **Key Insight**: We found that the server limits the total number of active sessions a user can have (to 50). To avoid exhausting this pool, we must "burn after reading."
-    *   The `finally` block starts a **background async task** that calls the `delete_session` function.
-    *   This background task sends a `POST` request to the school's `delSession` endpoint, including the `sessionId` that was just used, to permanently delete it from the server.
-    *   This "garbage collection" mechanism is the guarantee that our "stateless" model can operate long-term.
-
-This process forms a perfect closed loop: **Create -> Use -> Destroy**. Every conversation is a new, independent interaction that does not rely on the server's historical state, giving the desktop client full control over the context.
-
-#### How it keep alive?
-The adapter script establishes and reuses a 'Persistent Heartbeat Session.' 
-The adapter service keeps this session active by sending a token-free `savesession` message to the web service at a configurable 20-minute interval.
-
+```
+gpt-6-astra          gpt-5.6-sol         gpt-5.6-terra      gpt-5.6-luna
+gpt-5.5              gpt-5.4             gpt-5.4-mini       gpt-5.4-nano
+claude-opus-5        claude-sonnet-5     GLM-5.2
+DeepSeek-V4-pro      DeepSeek-V4-flash   deepseek-v4-flash-local
+Doubao-Seed-2.1-pro  Doubao-Seed-2.0-pro Doubao-Seed-2.0-lite
+qwen3.6-27b
+```
 
 ---
 
-### Pitfalls & Lessons Learned
+## Tools
 
-This journey was like navigating through a thick fog, setting a course based on limited clues, hitting an iceberg, and then recalibrating.
+| Script | Purpose |
+|---|---|
+| `auth_v4.py` | Headless SSO login, captures `jm-token` |
+| `set_tokens.py` | Paste a token manually |
+| `go-live.bat` | One-click: tunnel check → token refresh → restart |
+| `tools/get_models.py` | Fetch the live model list (`--json`) |
+| `tools/check_sessions.py` | Inspect / clean account sessions (`--clean`) |
+| `tools/install_autostart.ps1` | Register a logon autostart task (`-Remove`) |
 
-#### Pitfall #1: The Back-and-Forth on Context Handling
+---
 
-*   **Symptom**: The model seemed to have "amnesia," unable to understand multi-turn conversations or responding with "I don't understand" to long texts from a knowledge base.
-*   **Initial Attempt (v1-v4)**: We simply concatenated all history into one big string. This worked for simple chats but failed with complex knowledge bases.
-*   **The Wrong Turn (v4 - "Session State" Simulation)**: We mistakenly assumed we should mimic the web UI's stateful behavior, sending only the last user message and relying on the server's `sessionId` to maintain context. **This was our biggest detour**, as it contradicted our goal of building a stateless, client-controlled API. It resulted in a model with no context, which naturally couldn't answer correctly.
-*   **Another Attempt (v8 - "Session Injection")**: We devised a "clever" method of trying to rebuild context on the server turn-by-turn with multiple POST requests. This failed due to excessive request frequency.
-*   **The Final Epiphany (v10)**: Your observation—that the web UI could "swallow a huge chunk of text at once"—made us realize that the simplest approach was the right one. The problem wasn't *how* to send the context, but rather **what kind of context the backend could handle** and **how fast we were sending it**.
+## How it works
 
-#### Pitfall #2: The Mysterious "Async" Problem and the 429 Error
+```
+client (OpenAI / Anthropic format)
+   │
+   ▼
+adapter.py  (FastAPI)
+   ├── (1) saveSession   create session with model/temperature/max_tokens
+   ├── (2) completions   streaming completion
+   └── (3) delSession    delete when done
+   │  with jm-token header
+   ▼
+school platform  https://xipuai.xjtlu.edu.cn/jmapi/api/chat
+```
 
-*   **Symptom**: Frequent `Request too fast` or `429 Too Many Requests` errors.
-*   **Initial Attempt (v2/v3 - The "Ammunition Depot" Model)**: We designed an elaborate asynchronous "ammo box" (`session_id_ammo_box`) to pre-fetch the next session ID in the background while processing the current request, intending to boost efficiency.
-*   **The Fatal Concurrency**: The problem was that the background "pre-fetch" request (`saveSession`) and the foreground "update parameters" request (also `saveSession`) were happening **within milliseconds of each other**. The server's rate-limiting mechanism immediately flagged this **concurrent access** as abnormal, causing it to fail.
-*   **The Wrong Solution (v8 - "Session Injection")**: We abandoned the "ammo box," but the new "session injection" logic introduced an even denser sequence of requests, triggering the same rate limit.
-*   **The Final Epiphany (v6, v10)**: We finally understood that **the key wasn't concurrency, but frequency**. We didn't need a complex async queue; we just needed a simple, human-like `asyncio.sleep()` between consecutive API calls. This tiny delay was the "silver bullet" that solved all our rate-limiting problems.
+Stateless by design: every request is create → use → destroy, and the client
+owns the conversation context.
 
-#### Pitfall #3: Misinterpreting Error Messages
+---
 
-*   **Symptom**: The 429 error returned by the server included the message `...adjust the length of the context...`.
-*   **The Wrong Assumption (v9)**: We took this message at face value and assumed the text was too long. This led us to develop an "intelligent truncation" module.
-*   **A Fortunate Coincidence**: Although based on a false premise, this truncation module **happened to work**. We later realized its success was not due to the truncation itself, but because of the **incidental request delay** it introduced and its potential to **unintentionally clean "toxic" characters** from the text.
-*   **The Final Epiphany (v10)**: Your final tests proved that the backend could handle long text without truncation, as long as there was a delay. This taught us a profound lesson: **API error messages don't always reveal the root cause of a problem; sometimes, they are a smokescreen**. Reverse engineering requires bold hypotheses but, more importantly, careful verification.
+## Known limitations
 
-## Common Errors
-|Error|Reason|Measure|
-|--|--|--|
-|"403"|Token expired|Re-run auth.py|
-|"Unfortunately, I don't have any relevant information regarding this matter. However. Please feel free to ask me other questions, and I’ll do my best to help."|Prompt includes "poisonous text", the backend cannot read it|Delete the last conversation of this session|
-|200OK but return nothing. Send the same question to the web service and it will return "Unfortunately, I don't......"|Banned words detected by the school|modify your prompt|
-|"Request Err!"|Enter "poisonous text", the backend cannot read it|Delete the last conversation of this session|
-|'INFO:     127.0.0.1:7607 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error'|Token error|re-run auth.py|
-|'Request too fast, please try again later!'|Conflict with scripted automatic messages|Try again in a few seconds|
+- **Rate limited**: the platform returns `Request too fast` if you hammer it.
+  The adapter inserts a 1s delay; don't run concurrent bursts.
+- **50-session cap** per account — the adapter cleans up after itself.
+- **Reasoning tokens are billed too** — so points burn faster than you'd expect.
+- **`jm-token` expires** — just re-run `auth_v4.py`.
 
-## To do list
-- [x] `adapter.py`, remove maxtoken cut
-- [x] `adapter.py`, optimize input format
-- [ ] `adapter.py`, Isolate the "heartbeat" as a subprocess
-- [ ] `adapter.py`, fix bug: When HeartbeatSessionID in `.env` is invalid, the keepalive function will silently fail
-- [ ] `adapter.py`, support MCP
+---
+
+## License & disclaimer
+
+Released under the upstream license,
+**[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)**
+(Attribution-NonCommercial-ShareAlike).
+
+- **Attribution** — original author [@sealeelike](https://github.com/sealeelike)
+- **NonCommercial** — no commercial use
+- **ShareAlike** — derivatives must use the same license
+
+See [`LICENCE`](LICENCE) and [`DISCLAIMER.md`](DISCLAIMER.md).
+
+> **For personal study and educational research only.**
+> Comply with XJTLU's Junmou AI Terms of Use.
+> Do not share your token or expose this service to others — it adds load to
+> university infrastructure and may violate university policy.
+> You are responsible for any consequences of using this tool.
