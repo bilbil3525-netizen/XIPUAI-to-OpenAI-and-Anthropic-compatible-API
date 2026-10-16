@@ -13,7 +13,7 @@ import asyncio
 
 # --- Configuration ---
 load_dotenv(find_dotenv())
-BASE_URL = "https://jmapi.xjtlu.edu.cn/api/chat"
+BASE_URL = "https://xipuai.xjtlu.edu.cn/jmapi/api/chat"  # 2026 redesign
 SESSION_API_URL = f"{BASE_URL}/saveSession?sf_request_type=ajax"
 CHAT_API_URL = f"{BASE_URL}/completions?sf_request_type=fetch"
 DELETE_SESSION_URL = f"{BASE_URL}/delSession?sf_request_type=ajax"
@@ -56,7 +56,7 @@ app = FastAPI(
     title="XJTLU GenAI Adapter (v12 - With Heartbeat)",
     description="添加了心跳保活机制的适配器"
 )
-client = httpx.AsyncClient(timeout=120.0)
+client = httpx.AsyncClient(timeout=120.0, trust_env=False)
 
 # 心跳相关全局变量
 heartbeat_session_id = None
@@ -66,15 +66,22 @@ heartbeat_task = None
 def get_dynamic_headers():
     load_dotenv(find_dotenv(), override=True)
     jm_token = os.getenv("JM_TOKEN")
-    sdp_session = os.getenv("SDP_SESSION")
-    if not jm_token or not sdp_session:
-        raise ValueError("JM_TOKEN or SDP_SESSION not found in .env file.")
-    return {
+    sdp_session = os.getenv("SDP_SESSION")  # optional since the 2026 redesign
+    if not jm_token:
+        raise ValueError("JM_TOKEN not found in .env file.")
+    headers = {
         "accept": "application/json, text/plain, */*", "content-type": "application/json",
         "origin": "https://xipuai.xjtlu.edu.cn", "referer": "https://xipuai.xjtlu.edu.cn/",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "jm-token": jm_token, "sdp-app-session": sdp_session,
+        "jm-token": jm_token,
     }
+    if sdp_session:
+        headers["sdp-app-session"] = sdp_session
+    for extra in ("BROWSERID", "LANGUAGE"):
+        val = os.getenv(extra)
+        if val:
+            headers[extra.lower()] = val
+    return headers
 
 def process_and_format_prompt(messages: list) -> str:
     prompt_parts = [f"{msg.get('role', 'user').capitalize()}:\n{msg.get('content', '')}" for msg in messages]
