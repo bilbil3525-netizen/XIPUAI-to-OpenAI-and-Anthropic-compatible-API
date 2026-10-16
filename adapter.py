@@ -111,10 +111,66 @@ def get_dynamic_headers():
             headers[extra.lower()] = val
     return headers
 
+# --- Upstream stores each request in a MySQL TEXT column (65,535 byte cap).
+# --- Keep a safety margin so multi-byte text can never tip it over.
+MAX_PROMPT_BYTES = 60000
+
+
+def _bytes(s: str) -> int:
+    return len(s.encode("utf-8"))
+
+
+def fit_prompt(parts: list, max_bytes: int = MAX_PROMPT_BYTES) -> str:
+    """Join prompt parts, dropping the oldest ones until it fits the budget.
+
+    The first part (system prompt) and the final part (current turn) are always
+    kept - only the middle of the history is trimmed.
+    """
+    sep = "\n\n"
+
+    def size(items):
+        return sum(_bytes(p) for p in items) + _bytes(sep) * max(0, len(items) - 1)
+
+    if not parts:
+        return ""
+    if size(parts) <= max_bytes:
+        return sep.join(parts)
+
+    head = parts[0]
+    tail = list(parts[1:])
+    dropped = 0
+
+    while tail and size([head] + tail) > max_bytes:
+        tail.pop(0)
+        dropped += 1
+
+    if dropped:
+        logger.warning(
+            f"prompt too large ({size(parts)} bytes) - dropped {dropped} oldest "
+            f"message(s), kept {len(tail) + 1} part(s)"
+        )
+
+    # A single remaining part can still be oversized: hard-trim it from the
+    # front so the tail (the actual question) survives.
+    if size([head] + tail) > max_bytes:
+        keep = tail[-1] if tail else ""
+        budget = max_bytes - _bytes(head) - _bytes(sep)
+        if _bytes(keep) > budget > 0:
+            raw = keep.encode("utf-8")[-budget:]
+            keep = raw.decode("utf-8", "ignore")
+            logger.warning("single message still oversized - truncated from the front")
+        tail = [keep] if keep else []
+
+    result = sep.join([head] + tail)
+    if _bytes(result) > max_bytes:      # last-resort guard
+        result = result.encode("utf-8")[-max_bytes:].decode("utf-8", "ignore")
+    return result
+
+
 def process_and_format_prompt(messages: list) -> str:
     prompt_parts = [f"{msg.get('role', 'user').capitalize()}:\n{msg.get('content', '')}" for msg in messages]
-    full_prompt = "\n\n".join(prompt_parts)
-    logger.info(f"Final, PROCESSED prompt for backend:\n---\n{full_prompt}\n---")
+    full_prompt = fit_prompt(prompt_parts)
+    logger.info(f"Final prompt: {_bytes(full_prompt)} bytes, {len(prompt_parts)} part(s)")
     return full_prompt
 
 async def create_new_session(openai_request: dict):
@@ -520,7 +576,7 @@ def _anthropic_prompt(body: dict) -> str:
         if text:
             parts.append(f"{role}:\n{text}")
     parts.append("Assistant:")
-    return "\n\n".join(parts)
+    return fit_prompt(parts)
 
 
 def _sse(event: str, data: dict) -> str:
