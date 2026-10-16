@@ -10,6 +10,7 @@ from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv, find_dotenv, set_key
 from datetime import datetime
 import asyncio
+import random
 
 # --- Configuration ---
 load_dotenv(find_dotenv())
@@ -27,10 +28,11 @@ ENABLE_AUTO_DELETION = True
 # ===================================================================
 # 心跳间隔（秒）- 用户静默多长时间后开始发送心跳
 HEARTBEAT_INTERVAL = 1200
+HEARTBEAT_JITTER = 420  # +/- 秒，避免整点规律
 # 是否启用心跳功能
 ENABLE_HEARTBEAT = True
 # 心跳会话名称
-HEARTBEAT_SESSION_NAME = "Persistent Heartbeat Session"
+HEARTBEAT_SESSION_NAME = "Notes"
 # ===================================================================
 
 AVAILABLE_MODELS = [
@@ -85,9 +87,20 @@ def get_dynamic_headers():
     if not jm_token:
         raise ValueError("JM_TOKEN not found in .env file.")
     headers = {
-        "accept": "application/json, text/plain, */*", "content-type": "application/json",
-        "origin": "https://xipuai.xjtlu.edu.cn", "referer": "https://xipuai.xjtlu.edu.cn/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "content-type": "application/json",
+        "origin": "https://xipuai.xjtlu.edu.cn",
+        "referer": "https://xipuai.xjtlu.edu.cn/v3/chat",
+        "priority": "u=1, i",
+        "sec-ch-ua": '"Microsoft Edge";v="155", "Chromium";v="155", "Not(A:Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
         "jm-token": jm_token,
     }
     if sdp_session:
@@ -107,7 +120,9 @@ def process_and_format_prompt(messages: list) -> str:
 async def create_new_session(openai_request: dict):
     """创建新的会话"""
     headers = get_dynamic_headers()
-    session_name = f"API Request @ {datetime.now().strftime('%H:%M:%S')}"
+    _topics = ["New Chat", "新对话", "问题", "求助", "Discussion", "Notes",
+               "Research", "Summary", "Draft", "Review"]
+    session_name = random.choice(_topics)
     payload = {
         "name": session_name,
         "model": openai_request.get("model"),
@@ -149,7 +164,7 @@ async def create_heartbeat_session():
     headers = get_dynamic_headers()
     payload = {
         "name": HEARTBEAT_SESSION_NAME,
-        "model": "qwen-2.5-72b",  # 使用默认模型
+        "model": "GLM-5.2",  # 使用默认模型
         "temperature": 0.7,
         "maxToken": 0,
         "presencePenalty": 0,
@@ -195,7 +210,7 @@ async def send_heartbeat():
         # 发送一个简单的saveSession请求作为心跳
         payload = {
             "name": HEARTBEAT_SESSION_NAME,
-            "model": "qwen-2.5-72b",
+            "model": "GLM-5.2",
             "temperature": 0.7,
             "maxToken": 0,
             "presencePenalty": 0,
@@ -237,7 +252,8 @@ async def heartbeat_loop():
             time_since_activity = current_time - last_user_activity
             
             # 如果用户静默时间超过心跳间隔，发送心跳
-            if time_since_activity >= HEARTBEAT_INTERVAL:
+            threshold = HEARTBEAT_INTERVAL + random.randint(-HEARTBEAT_JITTER, HEARTBEAT_JITTER)
+            if time_since_activity >= threshold:
                 await send_heartbeat()
                 last_user_activity = current_time  # 重置计时器
                 
