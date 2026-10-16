@@ -34,9 +34,24 @@ HEARTBEAT_SESSION_NAME = "Persistent Heartbeat Session"
 # ===================================================================
 
 AVAILABLE_MODELS = [
-    "DeepSeek-R1", "DeepseekR1联网", "qwen-2.5-72b", "gpt-4.1-nano", "gpt-4.1",
-    "o1-mini", "o3-mini", "gpt-o3", "o4-mini", "gemini-2.5-pro-exp-03-25",
-    "claude-3-7-sonnet-20250219",
+    "qwen3.6-27b",
+    "deepseek-v4-flash-local",
+    "DeepSeek-V4-flash",
+    "DeepSeek-V4-pro",
+    "gpt-6-astra",
+    "gpt-5.6-luna",
+    "gpt-5.6-terra",
+    "gpt-5.6-sol",
+    "gpt-5.4-nano",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "Doubao-Seed-2.0-pro",
+    "Doubao-Seed-2.0-lite",
+    "Doubao-Seed-2.1-pro",
+    "GLM-5.2",
+    "claude-sonnet-5",
+    "claude-opus-5",
 ]
 
 # --- Logging Setup ---
