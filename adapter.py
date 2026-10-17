@@ -576,7 +576,13 @@ def _anthropic_prompt(body: dict) -> str:
         if text:
             parts.append(f"{role}:\n{text}")
     parts.append("Assistant:")
-    return fit_prompt(parts)
+    prompt = fit_prompt(parts)
+    logger.info(
+        f"prompt bytes: {_bytes(prompt)} / {MAX_PROMPT_BYTES} "
+        f"(system={_bytes(_anthropic_text(body.get('system') or ''))}, "
+        f"messages={len(body.get('messages') or [])})"
+    )
+    return prompt
 
 
 def _sse(event: str, data: dict) -> str:
